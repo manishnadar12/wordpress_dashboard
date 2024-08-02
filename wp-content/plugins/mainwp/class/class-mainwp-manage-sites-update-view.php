@@ -1,0 +1,773 @@
+<?php
+/**
+ * MainWP Manage Sites Update View.
+ *
+ * @package MainWP/Dashboard
+ */
+
+namespace MainWP\Dashboard;
+
+/**
+ * Class MainWP_Manage_Sites_Update_View
+ *
+ * @package MainWP\Dashboard
+ */
+class MainWP_Manage_Sites_Update_View {
+
+	/**
+	 * Method render_updates()
+	 *
+	 * If empty do nothing else grab the Child Sites ID and pass it to
+	 * method render_individual_updates().
+	 *
+	 * @param mixed $website Child Site Info.
+	 *
+	 * @return self render_individual_updates()
+	 */
+	public static function render_updates( $website ) {
+		if ( empty( $website ) ) {
+			return;
+		}
+
+		$website_id = $website->id;
+		self::render_individual_updates( $website_id );
+	}
+
+	/**
+	 * Method render_individual_updates()
+	 *
+	 * Render Plugin updates Tab.
+	 *
+	 * @param mixed $id Child Site ID.
+	 *
+	 * @uses \MainWP\Dashboard\MainWP_DB_Common::get_user_extension()
+	 * @uses \MainWP\Dashboard\MainWP_DB::get_sql_website_by_id()
+	 * @uses \MainWP\Dashboard\MainWP_DB::query()
+	 * @uses \MainWP\Dashboard\MainWP_DB::fetch_object()
+	 * @uses \MainWP\Dashboard\MainWP_Manage_Sites_View::render_header_tabs()
+	 */
+	public static function render_individual_updates( $id ) {
+
+		/**
+		 * Current user global.
+		 *
+		 * @global string
+		 */
+		global $current_user;
+		$userExtension = MainWP_DB_Common::instance()->get_user_extension();
+		$sql           = MainWP_DB::instance()->get_sql_website_by_id( $id, false, array( 'premium_upgrades', 'plugins_outdate_dismissed', 'themes_outdate_dismissed', 'plugins_outdate_info', 'themes_outdate_info', 'favi_icon' ) );
+		$websites      = MainWP_DB::instance()->query( $sql );
+
+		MainWP_DB::data_seek( $websites, 0 );
+		if ( $websites ) {
+			$website = MainWP_DB::fetch_object( $websites );
+		}
+
+		$mainwp_show_language_updates = get_option( 'mainwp_show_language_updates', 1 );
+
+		$active_tab  = 'plugins';
+		$active_text = esc_html__( 'Plugins Updates', 'mainwp' );
+		if ( isset( $_GET['tab'] ) ) {
+			if ( 'wordpress-updates' === $_GET['tab'] ) {
+				$active_tab  = 'WordPress';
+				$active_text = esc_html__( 'WordPress Updates', 'mainwp' );
+			} elseif ( 'themes-updates' === $_GET['tab'] ) {
+				$active_tab  = 'themes';
+				$active_text = esc_html__( 'Themes Updates', 'mainwp' );
+			} elseif ( 'translations-updates' === $_GET['tab'] ) {
+				$active_tab  = 'trans';
+				$active_text = esc_html__( 'Translations Updates', 'mainwp' );
+			} elseif ( 'abandoned-plugins' === $_GET['tab'] ) {
+				$active_tab  = 'abandoned-plugins';
+				$active_text = esc_html__( 'Abandoned Plugins', 'mainwp' );
+			} elseif ( 'abandoned-themes' === $_GET['tab'] ) {
+				$active_tab  = 'abandoned-themes';
+				$active_text = esc_html__( 'Abandoned Themes', 'mainwp' );
+			}
+		}
+		MainWP_Manage_Sites_View::render_header_tabs( $active_tab, $active_text, $mainwp_show_language_updates )
+		?>
+		<div class="ui segment" id="mainwp-manage-<?php echo $id; ?>-updates">
+			<?php if ( MainWP_Utility::show_mainwp_message( 'notice', 'mainwp-manage-updates-site-message' ) ) : ?>
+				<div class="ui info message">
+					<i class="close icon mainwp-notice-dismiss" notice-id="mainwp-manage-updates-site-message"></i>
+					<div><?php echo sprintf( __( 'Manage available updates for the child site. From here, you can update update %splugins%s, %sthemes%s, and %sWordPress core%s.', 'mainwp' ), '<a href="https://kb.mainwp.com/docs/update-plugins/" target="_blank">', '</a>', '<a href="https://kb.mainwp.com/docs/update-themes/" target="_blank">', '</a>', '<a href="https://kb.mainwp.com/docs/update-wordpress-core/" target="_blank">', '</a>' ); ?></div>
+					<div><?php echo sprintf( __( 'Also, from here, you can ignore updates for %sWordPress core%s, %splugins%s, and %sthemes%s.', 'mainwp' ), '<a href="https://kb.mainwp.com/docs/ignore-wordpress-core-update/" target="_blank">', '</a>', '<a href="https://kb.mainwp.com/docs/ignore-plugin-updates/" target="_blank">', '</a>', '<a href="https://kb.mainwp.com/docs/ignore-theme-updates/" target="_blank">', '</a>' ); ?></div>
+				</div>
+			<?php endif; ?>
+			<?php
+			self::render_wpcore_updates( $website, $active_tab );
+			self::render_plugins_updates( $website, $active_tab, $userExtension );
+			self::render_themes_updates( $website, $active_tab, $userExtension );
+
+			if ( $mainwp_show_language_updates ) :
+				self::render_language_updates( $website, $active_tab );
+			endif;
+
+			self::render_abandoned_plugins( $website, $active_tab, $userExtension );
+			self::render_abandoned_themes( $website, $active_tab, $userExtension );
+			?>
+		</div>
+		<script type="text/javascript">
+		jQuery( document ).ready( function () {
+			jQuery( '.ui.dropdown .item' ).tab();
+			jQuery( 'table.ui.table' ).DataTable( {
+				"searching": true,
+				"paging" : false,
+				"info" : true,
+				"columnDefs" : [ { "orderable": false, "targets": "no-sort" } ],
+				"language" : { "emptyTable": "No available updates. Please sync your MainWP Dashboard with Child Sites to see if there are any new updates available." }
+			} );
+		} );
+		</script>
+		<?php
+	}
+
+	/**
+	 * Method get_total_info()
+	 *
+	 * Get total Updates information.
+	 *
+	 * @param mixed $site_id Child Site id.
+	 */
+	public static function get_total_info( $site_id ) { // phpcs:ignore -- Current complexity is the only way to achieve desired results, pull request solutions appreciated.
+
+		$userExtension = MainWP_DB_Common::instance()->get_user_extension();
+		$sql           = MainWP_DB::instance()->get_sql_website_by_id( $site_id, false, array( 'premium_upgrades', 'plugins_outdate_dismissed', 'themes_outdate_dismissed', 'plugins_outdate_info', 'themes_outdate_info', 'favi_icon' ) );
+		$websites      = MainWP_DB::instance()->query( $sql );
+
+		MainWP_DB::data_seek( $websites, 0 );
+		if ( $websites ) {
+			$website = MainWP_DB::fetch_object( $websites );
+		}
+
+		$return = array(
+			'total_wp'            => 0,
+			'total_plugins'       => 0,
+			'total_themes'        => 0,
+			'total_trans'         => 0,
+			'total_aband_plugins' => 0,
+			'total_aband_themes'  => 0,
+			'total_upgrades'      => 0,
+		);
+
+		if ( empty( $website ) ) {
+			return $return;
+		}
+
+		$wp_upgrades = json_decode( MainWP_DB::instance()->get_website_option( $website, 'wp_upgrades' ), true );
+
+		if ( $website->is_ignoreCoreUpdates ) {
+			$wp_upgrades = array();
+		}
+
+		$return['total_wp'] = $wp_upgrades ? count( $wp_upgrades ) : 0;
+
+		$plugin_upgrades = json_decode( $website->plugin_upgrades, true );
+
+		if ( $website->is_ignorePluginUpdates ) {
+			$plugin_upgrades = array();
+		}
+
+		if ( ! is_array( $plugin_upgrades ) ) {
+			$plugin_upgrades = array();
+		}
+
+		$decodedPremiumUpgrades = json_decode( MainWP_DB::instance()->get_website_option( $website, 'premium_upgrades' ), true );
+		if ( is_array( $decodedPremiumUpgrades ) ) {
+			foreach ( $decodedPremiumUpgrades as $crrSlug => $premiumUpgrade ) {
+				$premiumUpgrade['premium'] = true;
+				if ( 'plugin' === $premiumUpgrade['type'] ) {
+					$premiumUpgrade = array_filter( $premiumUpgrade );
+
+					if ( ! isset( $plugin_upgrades[ $crrSlug ] ) ) {
+						$plugin_upgrades[ $crrSlug ] = array();
+					}
+					$plugin_upgrades[ $crrSlug ] = array_merge( $plugin_upgrades[ $crrSlug ], $premiumUpgrade );
+				}
+			}
+		}
+		$ignored_plugins = json_decode( $website->ignored_plugins, true );
+		if ( is_array( $ignored_plugins ) ) {
+			$plugin_upgrades = array_diff_key( $plugin_upgrades, $ignored_plugins );
+		}
+
+		$ignored_plugins = json_decode( $userExtension->ignored_plugins, true );
+		if ( is_array( $ignored_plugins ) ) {
+			$plugin_upgrades = array_diff_key( $plugin_upgrades, $ignored_plugins );
+		}
+
+		$return['total_plugins'] = count( $plugin_upgrades );
+
+		$theme_upgrades = json_decode( $website->theme_upgrades, true );
+
+		if ( $website->is_ignoreThemeUpdates ) {
+			$theme_upgrades = array();
+		}
+
+		if ( ! is_array( $theme_upgrades ) ) {
+			$theme_upgrades = array();
+		}
+		$decodedPremiumUpgrades = json_decode( MainWP_DB::instance()->get_website_option( $website, 'premium_upgrades' ), true );
+		if ( is_array( $decodedPremiumUpgrades ) ) {
+			foreach ( $decodedPremiumUpgrades as $crrSlug => $premiumUpgrade ) {
+				$premiumUpgrade['premium'] = true;
+
+				if ( 'theme' === $premiumUpgrade['type'] ) {
+					$premiumUpgrade = array_filter( $premiumUpgrade );
+
+					if ( ! isset( $theme_upgrades[ $crrSlug ] ) ) {
+						$theme_upgrades[ $crrSlug ] = array();
+					}
+					$theme_upgrades[ $crrSlug ] = array_merge( $theme_upgrades[ $crrSlug ], $premiumUpgrade );
+				}
+			}
+		}
+		$ignored_themes = json_decode( $website->ignored_themes, true );
+		if ( is_array( $ignored_themes ) ) {
+			$theme_upgrades = array_diff_key( $theme_upgrades, $ignored_themes );
+		}
+
+		$ignored_themes = json_decode( $userExtension->ignored_themes, true );
+		if ( is_array( $ignored_themes ) ) {
+			$theme_upgrades = array_diff_key( $theme_upgrades, $ignored_themes );
+		}
+
+		$return['total_themes'] = count( $theme_upgrades );
+
+		$translation_upgrades = json_decode( $website->translation_upgrades, true );
+		if ( ! is_array( $translation_upgrades ) ) {
+			$translation_upgrades = array();
+		}
+		$return['total_trans'] = count( $translation_upgrades );
+
+		$plugins_outdate = json_decode( MainWP_DB::instance()->get_website_option( $website, 'plugins_outdate_info' ), true );
+		if ( ! is_array( $plugins_outdate ) ) {
+			$plugins_outdate = array();
+		}
+		if ( 0 < count( $plugins_outdate ) ) {
+			$pluginsOutdateDismissed = json_decode( MainWP_DB::instance()->get_website_option( $website, 'plugins_outdate_dismissed' ), true );
+			if ( is_array( $pluginsOutdateDismissed ) ) {
+				$plugins_outdate = array_diff_key( $plugins_outdate, $pluginsOutdateDismissed );
+			}
+
+			$decodedDismissedPlugins = json_decode( $userExtension->dismissed_plugins, true );
+			if ( is_array( $decodedDismissedPlugins ) ) {
+				$plugins_outdate = array_diff_key( $plugins_outdate, $decodedDismissedPlugins );
+			}
+		}
+		$return['total_aband_plugins'] = count( $plugins_outdate );
+
+		$themes_outdate = json_decode( MainWP_DB::instance()->get_website_option( $website, 'themes_outdate_info' ), true );
+		if ( ! is_array( $themes_outdate ) ) {
+			$themes_outdate = array();
+		}
+
+		if ( 0 < count( $themes_outdate ) ) {
+			$themesOutdateDismissed = json_decode( MainWP_DB::instance()->get_website_option( $website, 'themes_outdate_dismissed' ), true );
+			if ( is_array( $themesOutdateDismissed ) ) {
+				$themes_outdate = array_diff_key( $themes_outdate, $themesOutdateDismissed );
+			}
+
+			$decodedDismissedThemes = json_decode( $userExtension->dismissed_themes, true );
+			if ( is_array( $decodedDismissedThemes ) ) {
+				$themes_outdate = array_diff_key( $themes_outdate, $decodedDismissedThemes );
+			}
+		}
+
+		$return['total_aband_themes'] = count( $themes_outdate );
+
+		$return['total_upgrades'] = $return['total_wp'] + $return['total_plugins'] + $return['total_themes'] + $return['total_trans'];
+
+		return $return;
+	}
+
+
+	/**
+	 * Method render_wpcore_updates()
+	 *
+	 * Render the WordPress Updates Tab.
+	 *
+	 * @param mixed $website Child Site info.
+	 * @param mixed $active_tab Current active tab.
+	 *
+	 * @uses \MainWP\Dashboard\MainWP_DB::get_website_option()
+	 */
+	public static function render_wpcore_updates( $website, $active_tab ) {
+		$user_can_update_wp = mainwp_current_user_have_right( 'dashboard', 'update_wordpress' );
+		?>
+		<div class="ui <?php echo 'WordPress' === $active_tab ? 'active' : ''; ?> tab" data-tab="wordpress">
+				<table class="ui stackable single line table" id="mainwp-wordpress-updates-table">
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'Version', 'mainwp' ); ?></th>
+							<th><?php esc_html_e( 'New Version', 'mainwp' ); ?></th>
+							<th class="right aligned"></th>
+						</tr>
+					</thead>
+					<tbody>
+					<?php if ( ! $website->is_ignoreCoreUpdates ) : ?>
+						<?php $wp_upgrades = json_decode( MainWP_DB::instance()->get_website_option( $website, 'wp_upgrades' ), true ); ?>
+						<?php if ( ( 0 !== count( $wp_upgrades ) ) && ! ( '' !== $website->sync_errors ) ) : ?>
+						<tr class="mainwp-wordpress-update" site_id="<?php echo esc_attr( $website->id ); ?>" site_name="<?php echo rawurlencode( stripslashes( $website->name ) ); ?>" updated="<?php echo ( 0 < count( $wp_upgrades ) ) ? '0' : '1'; ?>">
+							<td>								
+								<?php if ( 0 < count( $wp_upgrades ) ) : ?>
+									<?php echo esc_html( $wp_upgrades['current'] ); ?>
+								<?php endif; ?>
+							</td>
+							<td>
+								<?php if ( 0 < count( $wp_upgrades ) ) : ?>
+									<?php echo esc_html( $wp_upgrades['new'] ); ?>
+								<?php endif; ?>
+							</td>
+							<td class="right aligned">
+								<?php if ( $user_can_update_wp ) : ?>
+									<?php if ( 0 < count( $wp_upgrades ) ) : ?>
+										<a href="#" data-tooltip="<?php esc_attr_e( 'Update', 'mainwp' ) . ' ' . $website->name; ?>" data-inverted="" data-position="left center" class="ui green button mini" onClick="return updatesoverview_upgrade(<?php echo esc_attr( $website->id ); ?>, this )"><?php esc_html_e( 'Update Now', 'mainwp' ); ?></a>
+										<input type="hidden" id="wp-updated-<?php echo esc_attr( $website->id ); ?>" value="<?php echo ( 0 < count( $wp_upgrades ) ? '0' : '1' ); ?>" />
+									<?php endif; ?>
+								<?php endif; ?>
+							</td>
+						</tr>
+						<?php endif; ?>
+					<?php endif; ?>
+					</tbody>
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'Version', 'mainwp' ); ?></th>
+							<th><?php esc_html_e( 'New Version', 'mainwp' ); ?></th>
+							<th class="right aligned"></th>
+						</tr>
+					</thead>
+				</table>
+			</div>
+		<?php
+	}
+
+	/**
+	 * Method render_plugins_updates()
+	 *
+	 * Render the Plugin Updates Tab.
+	 *
+	 * @param mixed $website Child Site info.
+	 * @param mixed $active_tab Current active tab.
+	 * @param mixed $userExtension MainWP trusted plugin data.
+	 *
+	 * @uses \MainWP\Dashboard\MainWP_DB::get_website_option()
+	 * @uses \MainWP\Dashboard\MainWP_Updates_Table_Helper
+	 */
+	public static function render_plugins_updates( $website, $active_tab, $userExtension ) { // phpcs:ignore -- Current complexity is the only way to achieve desired results, pull request solutions appreciated.
+
+		$trustedPlugins = json_decode( $userExtension->trusted_plugins, true );
+		if ( ! is_array( $trustedPlugins ) ) {
+			$trustedPlugins = array();
+		}
+
+		$user_can_update_plugins  = mainwp_current_user_have_right( 'dashboard', 'update_plugins' );
+		$user_can_ignore_unignore = mainwp_current_user_have_right( 'dashboard', 'ignore_unignore_updates' );
+		?>
+		<div class="ui <?php echo 'plugins' === $active_tab ? 'active' : ''; ?> tab" data-tab="plugins">
+			<?php if ( ! $website->is_ignorePluginUpdates ) : ?>
+				<?php
+				$plugin_upgrades        = json_decode( $website->plugin_upgrades, true );
+				$decodedPremiumUpgrades = json_decode( MainWP_DB::instance()->get_website_option( $website, 'premium_upgrades' ), true );
+				if ( is_array( $decodedPremiumUpgrades ) ) {
+					foreach ( $decodedPremiumUpgrades as $crrSlug => $premiumUpgrade ) {
+						$premiumUpgrade['premium'] = true;
+
+						if ( 'plugin' === $premiumUpgrade['type'] ) {
+							if ( ! is_array( $plugin_upgrades ) ) {
+								$plugin_upgrades = array();
+							}
+
+							$premiumUpgrade = array_filter( $premiumUpgrade );
+
+							if ( ! isset( $plugin_upgrades[ $crrSlug ] ) ) {
+								$plugin_upgrades[ $crrSlug ] = array();
+							}
+							$plugin_upgrades[ $crrSlug ] = array_merge( $plugin_upgrades[ $crrSlug ], $premiumUpgrade );
+						}
+					}
+				}
+				$ignored_plugins = json_decode( $website->ignored_plugins, true );
+				if ( is_array( $ignored_plugins ) ) {
+					$plugin_upgrades = array_diff_key( $plugin_upgrades, $ignored_plugins );
+				}
+
+				$ignored_plugins = json_decode( $userExtension->ignored_plugins, true );
+				if ( is_array( $ignored_plugins ) ) {
+					$plugin_upgrades = array_diff_key( $plugin_upgrades, $ignored_plugins );
+				}
+
+				$updates_table_helper = new MainWP_Updates_Table_Helper( MAINWP_VIEW_PER_SITE );
+
+				?>
+				<table id="mainwp-updates-plugins-table" class="ui stackable single line table mainwp-updates-list">
+					<thead>
+						<tr>
+						<?php $updates_table_helper->print_column_headers(); ?>						
+						</tr>
+					</thead>
+					<tbody class="plugins-bulk-updates" site_id="<?php echo esc_attr( $website->id ); ?>" site_name="<?php echo rawurlencode( stripslashes( $website->name ) ); ?>">
+					<?php foreach ( $plugin_upgrades as $slug => $plugin_upgrade ) : ?>
+						<?php $plugin_name = rawurlencode( $slug ); ?>
+						<?php
+						$indent_hidden = '<input type="hidden" id="wp_upgraded_plugin_' . esc_attr( $website->id ) . '_' . $plugin_name . '" value="0" />';
+						$row_columns   = array(
+							'title'   => '<a href="' . admin_url() . 'plugin-install.php?tab=plugin-information&plugin=' . esc_attr( $plugin_upgrade['update']['slug'] ) . '&url=' . ( isset( $plugin_upgrade['PluginURI'] ) ? rawurlencode( $plugin_upgrade['PluginURI'] ) : '' ) . '&name=' . rawurlencode( $plugin_upgrade['Name'] ) . '&TB_iframe=true&width=772&height=887" target="_blank" class="thickbox open-plugin-details-modal">' . esc_html( $plugin_upgrade['Name'] ) . '</a>' . $indent_hidden,
+							'version' => esc_html( $plugin_upgrade['Version'] ),
+							'latest'  => '<a href="' . admin_url() . 'plugin-install.php?tab=plugin-information&plugin=' . esc_attr( $plugin_upgrade['update']['slug'] ) . '&url=' . ( isset( $plugin_upgrade['PluginURI'] ) ? rawurlencode( $plugin_upgrade['PluginURI'] ) : '' ) . '&name=' . rawurlencode( $plugin_upgrade['Name'] ) . '&section=changelog&TB_iframe=true&width=772&height=887" target="_blank" class="thickbox open-plugin-details-modal">' . esc_html( $plugin_upgrade['update']['new_version'] ) . '</a>',
+							'trusted' => ( in_array( $slug, $trustedPlugins ) ? true : false ),
+							'status'  => ( isset( $plugin_upgrade['active'] ) && $plugin_upgrade['active'] ) ? true : false,
+						);
+						?>
+						<tr plugin_slug="<?php echo $plugin_name; ?>" premium="<?php echo ( isset( $plugin_upgrade['premium'] ) ? esc_attr( $plugin_upgrade['premium'] ) : 0 ) ? 1 : 0; ?>" updated="0">
+							<?php
+							$row_columns     = $updates_table_helper->render_columns( $row_columns, $website );
+							$action_rendered = isset( $row_columns['action'] ) ? true : false;
+							if ( ! $action_rendered ) :
+								?>
+							<td class="right aligned">
+								<?php if ( $user_can_ignore_unignore ) : ?>
+									<a href="#" onClick="return updatesoverview_plugins_ignore_detail( '<?php echo $plugin_name; ?>', '<?php echo rawurlencode( $plugin_upgrade['Name'] ); ?>', <?php echo esc_attr( $website->id ); ?>, this )" class="ui mini button"><?php esc_html_e( 'Ignore Update', 'mainwp' ); ?></a>
+								<?php endif; ?>
+								<?php if ( $user_can_update_plugins ) : ?>
+									<a href="#" class="ui green mini button" onClick="return updatesoverview_upgrade_plugin( <?php echo esc_attr( $website->id ); ?>, '<?php echo $plugin_name; ?>' )"><?php esc_html_e( 'Update Now', 'mainwp' ); ?></a>
+								<?php endif; ?>
+							</td>
+							<?php endif; ?>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+					<tfoot>
+						<tr>
+						<?php $updates_table_helper->print_column_headers( false ); ?>	
+						</tr>
+					</tfoot>
+				</table>
+			<?php endif; ?>
+			</div>
+		<?php
+		MainWP_Updates::render_updates_modal();
+	}
+
+	/**
+	 * Method render_themes_updates()
+	 *
+	 * Render the Themes Updates Tab.
+	 *
+	 * @param mixed $website Child Site info.
+	 * @param mixed $active_tab Current active tab.
+	 * @param mixed $userExtension MainWP trusted themes data.
+	 *
+	 * @uses \MainWP\Dashboard\MainWP_DB::get_website_option()
+	 * @uses \MainWP\Dashboard\MainWP_Updates_Table_Helper
+	 */
+	public static function render_themes_updates( $website, $active_tab, $userExtension ) { // phpcs:ignore -- Current complexity is the only way to achieve desired results, pull request solutions appreciated.
+
+		$trustedThemes = json_decode( $userExtension->trusted_themes, true );
+		if ( ! is_array( $trustedThemes ) ) {
+			$trustedThemes = array();
+		}
+
+		$user_can_update_themes   = mainwp_current_user_have_right( 'dashboard', 'update_themes' );
+		$user_can_ignore_unignore = mainwp_current_user_have_right( 'dashboard', 'ignore_unignore_updates' );
+
+		?>
+		<div class="ui <?php echo 'themes' === $active_tab ? 'active' : ''; ?> tab" data-tab="themes">
+			<?php if ( ! $website->is_ignoreThemeUpdates ) : ?>
+				<?php
+				$theme_upgrades         = json_decode( $website->theme_upgrades, true );
+				$decodedPremiumUpgrades = json_decode( MainWP_DB::instance()->get_website_option( $website, 'premium_upgrades' ), true );
+				if ( is_array( $decodedPremiumUpgrades ) ) {
+					foreach ( $decodedPremiumUpgrades as $crrSlug => $premiumUpgrade ) {
+						$premiumUpgrade['premium'] = true;
+
+						if ( 'theme' === $premiumUpgrade['type'] ) {
+							if ( ! is_array( $theme_upgrades ) ) {
+								$theme_upgrades = array();
+							}
+
+							$premiumUpgrade = array_filter( $premiumUpgrade );
+
+							if ( ! isset( $theme_upgrades[ $crrSlug ] ) ) {
+								$theme_upgrades[ $crrSlug ] = array();
+							}
+							$theme_upgrades[ $crrSlug ] = array_merge( $theme_upgrades[ $crrSlug ], $premiumUpgrade );
+						}
+					}
+				}
+				$ignored_themes = json_decode( $website->ignored_themes, true );
+				if ( is_array( $ignored_themes ) ) {
+					$theme_upgrades = array_diff_key( $theme_upgrades, $ignored_themes );
+				}
+
+				$ignored_themes = json_decode( $userExtension->ignored_themes, true );
+				if ( is_array( $ignored_themes ) ) {
+					$theme_upgrades = array_diff_key( $theme_upgrades, $ignored_themes );
+				}
+
+				$updates_table_helper = new MainWP_Updates_Table_Helper( MAINWP_VIEW_PER_SITE, 'theme' );
+
+				?>
+				<table id="mainwp-updates-themes-table" class="ui stackable single line table mainwp-updates-list">
+					<thead>
+						<tr>
+						<?php $updates_table_helper->print_column_headers(); ?>
+						</tr>
+					</thead>
+					<tbody class="themes-bulk-updates" site_id="<?php echo esc_attr( $website->id ); ?>" site_name="<?php echo rawurlencode( stripslashes( $website->name ) ); ?>">
+						<?php foreach ( $theme_upgrades as $slug => $theme_upgrade ) : ?>
+							<?php $theme_name = rawurlencode( $slug ); ?>
+							<?php $indent_hidden = '<input type="hidden" id="wp_upgraded_theme_' . esc_attr( $website->id ) . '_' . $theme_name . '" value="0" />'; ?>
+							<?php
+							$row_columns = array(
+								'title'   => esc_html( $theme_upgrade['Name'] ) . $indent_hidden,
+								'version' => esc_html( $theme_upgrade['Version'] ),
+								'latest'  => esc_html( $theme_upgrade['update']['new_version'] ),
+								'trusted' => ( in_array( $slug, $trustedThemes, true ) ? true : false ),
+								'status'  => ( isset( $theme_upgrade['active'] ) && $theme_upgrade['active'] ) ? true : false,
+							);
+							?>
+							<tr theme_slug="<?php echo $theme_name; ?>" premium="<?php echo ( isset( $theme_upgrade['premium'] ) ? esc_attr( $theme_upgrade['premium'] ) : 0 ) ? 1 : 0; ?>" updated="0">
+								<?php
+								$row_columns     = $updates_table_helper->render_columns( $row_columns, $website );
+								$action_rendered = isset( $row_columns['action'] ) ? true : false;
+								if ( ! $action_rendered ) :
+									?>
+								<td class="right aligned">
+									<?php if ( $user_can_ignore_unignore ) : ?>
+										<a href="#" onClick="return updatesoverview_themes_ignore_detail( '<?php echo $theme_name; ?>', '<?php echo rawurlencode( $theme_upgrade['Name'] ); ?>', <?php echo esc_attr( $website->id ); ?>, this )" class="ui mini button"><?php esc_html_e( 'Ignore Update', 'mainwp' ); ?></a>
+									<?php endif; ?>
+									<?php if ( $user_can_update_themes ) : ?>
+										<a href="#" class="ui green mini button" onClick="return updatesoverview_upgrade_theme( <?php echo esc_attr( $website->id ); ?>, '<?php echo $theme_name; ?>' )"><?php esc_html_e( 'Update Now', 'mainwp' ); ?></a>
+									<?php endif; ?>
+								</td>
+								<?php endif; ?>
+							</tr>
+						<?php endforeach; ?>
+					</tbody>
+					<tfoot>
+						<tr>
+						<?php $updates_table_helper->print_column_headers( false ); ?>
+						</tr>
+					</tfoot>
+				</table>
+			<?php endif; ?>
+			</div>
+		<?php
+	}
+
+	/**
+	 * Method render_language_updates()
+	 *
+	 * Render the Language Updates Tab.
+	 *
+	 * @param mixed $website Child Site info.
+	 * @param mixed $active_tab Current active tab.
+	 */
+	public static function render_language_updates( $website, $active_tab ) {
+		$user_can_update_translation = mainwp_current_user_have_right( 'dashboard', 'update_translations' );
+		?>
+		<div class="ui <?php echo 'trans' === $active_tab ? 'active' : ''; ?> tab" data-tab="translations">
+			<table class="ui stackable single line table" id="mainwp-translations-table">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Translation', 'mainwp' ); ?></th>
+						<th><?php esc_html_e( 'Version', 'mainwp' ); ?></th>
+						<th class="collapsing no-sort"></th>
+					</tr>
+				</thead>
+				<tbody class="translations-bulk-updates" id="wp_translation_upgrades_<?php echo esc_attr( $website->id ); ?>" site_id="<?php echo esc_attr( $website->id ); ?>" site_name="<?php echo rawurlencode( stripslashes( $website->name ) ); ?>">
+				<?php $translation_upgrades = json_decode( $website->translation_upgrades, true ); ?>
+				<?php foreach ( $translation_upgrades as $translation_upgrade ) : ?>
+					<?php
+					$translation_name = isset( $translation_upgrade['name'] ) ? $translation_upgrade['name'] : $translation_upgrade['slug'];
+					$translation_slug = $translation_upgrade['slug'];
+					?>
+					<tr translation_slug="<?php echo $translation_slug; ?>" updated="0">
+						<td>
+							<?php echo esc_html( $translation_name ); ?>
+							<input type="hidden" id="wp_upgraded_translation_<?php echo esc_attr( $website->id ); ?>_<?php echo $translation_slug; ?>" value="0"/>
+						</td>
+						<td>
+							<?php echo esc_html( $translation_upgrade['version'] ); ?>
+						</td>
+						<td class="right aligned">
+							<?php if ( $user_can_update_translation ) { ?>
+								<a href="#" class="ui green mini button" onClick="return updatesoverview_upgrade_translation( <?php echo esc_attr( $website->id ); ?>, '<?php echo $translation_slug; ?>' )"><?php esc_html_e( 'Update Now', 'mainwp' ); ?></a>
+							<?php } ?>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+				<tfoot>
+					<tr>
+						<th><?php esc_html_e( 'Translation', 'mainwp' ); ?></th>
+						<th><?php esc_html_e( 'Version', 'mainwp' ); ?></th>
+						<th class="collapsing no-sort"></th>
+					</tr>
+				</tfoot>
+			</table>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Method render_abandoned_plugins()
+	 *
+	 * Render the Abandoned Plugin Tab.
+	 *
+	 * @param mixed $website Child Site info.
+	 * @param mixed $active_tab Current active tab.
+	 * @param mixed $userExtension MainWP trusted plugin data.
+	 *
+	 * @uses \MainWP\Dashboard\MainWP_DB::get_website_option()
+	 */
+	public static function render_abandoned_plugins( $website, $active_tab, $userExtension ) {
+
+		$user_can_ignore_unignore = mainwp_current_user_have_right( 'dashboard', 'ignore_unignore_updates' );
+
+		$plugins_outdate = json_decode( MainWP_DB::instance()->get_website_option( $website, 'plugins_outdate_info' ), true );
+		if ( ! is_array( $plugins_outdate ) ) {
+			$plugins_outdate = array();
+		}
+		$pluginsOutdateDismissed = json_decode( MainWP_DB::instance()->get_website_option( $website, 'plugins_outdate_dismissed' ), true );
+		if ( is_array( $pluginsOutdateDismissed ) ) {
+			$plugins_outdate = array_diff_key( $plugins_outdate, $pluginsOutdateDismissed );
+		}
+
+		$decodedDismissedPlugins = json_decode( $userExtension->dismissed_plugins, true );
+		if ( is_array( $decodedDismissedPlugins ) ) {
+			$plugins_outdate = array_diff_key( $plugins_outdate, $decodedDismissedPlugins );
+		}
+		$str_format = __( 'Updated %s days ago', 'mainwp' );
+		?>
+
+		<div class="ui <?php echo 'abandoned-plugins' === $active_tab ? 'active' : ''; ?> tab" data-tab="abandoned-plugins">
+			<table class="ui stackable single line table" id="mainwp-abandoned-plugins-table">
+				<thead>
+					<tr>
+						<tr>
+							<th><?php esc_html_e( 'Plugin', 'mainwp' ); ?></th>
+							<th><?php esc_html_e( 'Version', 'mainwp' ); ?></th>
+							<th><?php esc_html_e( 'Last Update', 'mainwp' ); ?></th>
+							<th class="no-sort"></th>
+						</tr>
+					</tr>
+				</thead>
+				<tbody id="wp_plugins_outdate_<?php echo esc_attr( $website->id ); ?>" site_id="<?php echo esc_attr( $website->id ); ?>" site_name="<?php echo rawurlencode( stripslashes( $website->name ) ); ?>">
+					<?php foreach ( $plugins_outdate as $slug => $plugin_outdate ) : ?>
+						<?php
+						$plugin_name              = rawurlencode( $slug );
+						$now                      = new \DateTime();
+						$last_updated             = $plugin_outdate['last_updated'];
+						$plugin_last_updated_date = new \DateTime( '@' . $last_updated );
+						$diff_in_days             = $now->diff( $plugin_last_updated_date )->format( '%a' );
+						$outdate_notice           = sprintf( $str_format, $diff_in_days );
+						?>
+						<tr dismissed="0">
+							<td>							
+								<a href="<?php echo admin_url() . 'plugin-install.php?tab=plugin-information&plugin=' . dirname( $slug ) . '&url=' . ( isset( $plugin_outdate['PluginURI'] ) ? rawurlencode( $plugin_outdate['PluginURI'] ) : '' ) . '&name=' . rawurlencode( $plugin_outdate['Name'] ) . '&TB_iframe=true&width=772&height=887'; ?>" target="_blank" class="thickbox open-plugin-details-modal"><?php echo esc_html( $plugin_outdate['Name'] ); ?></a>
+								<input type="hidden" id="wp_dismissed_plugin_<?php echo esc_attr( $website->id ); ?>_<?php echo $plugin_name; ?>" value="0"/>
+							</td>
+							<td><?php echo esc_html( $plugin_outdate['Version'] ); ?></td>
+							<td><?php echo $outdate_notice; ?></td>
+							<td class="right aligned" id="wp_dismissbuttons_plugin_<?php echo esc_attr( $website->id ); ?>_<?php echo $plugin_name; ?>">
+								<?php if ( $user_can_ignore_unignore ) { ?>
+								<a href="javascript:void(0)" class="ui mini button" onClick="return updatesoverview_plugins_dismiss_outdate_detail( '<?php echo $plugin_name; ?>', '<?php echo rawurlencode( $plugin_outdate['Name'] ); ?>', <?php echo esc_attr( $website->id ); ?>, this )"><?php esc_html_e( 'Ignore Now', 'mainwp' ); ?></a>
+							<?php } ?>
+							</td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+				<tfoot>
+					<tr>
+						<tr>
+							<th><?php esc_html_e( 'Plugin', 'mainwp' ); ?></th>
+							<th><?php esc_html_e( 'Version', 'mainwp' ); ?></th>
+							<th><?php esc_html_e( 'Last Update', 'mainwp' ); ?></th>
+							<th class="no-sort"></th>
+						</tr>
+					</tr>
+				</tfoot>
+			</table>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Method render_abandoned_themes()
+	 *
+	 * Render the Abandoned Themes tab.
+	 *
+	 * @param mixed $website Child Site info.
+	 * @param mixed $active_tab Current active tab.
+	 * @param mixed $userExtension MainWP trusted themes data.
+	 *
+	 * @uses \MainWP\Dashboard\MainWP_DB::get_website_option()
+	 */
+	public static function render_abandoned_themes( $website, $active_tab, $userExtension ) {
+
+		$user_can_ignore_unignore = mainwp_current_user_have_right( 'dashboard', 'ignore_unignore_updates' );
+
+		$themes_outdate = json_decode( MainWP_DB::instance()->get_website_option( $website, 'themes_outdate_info' ), true );
+		if ( ! is_array( $themes_outdate ) ) {
+			$themes_outdate = array();
+		}
+
+		if ( 0 < count( $themes_outdate ) ) {
+			$themesOutdateDismissed = json_decode( MainWP_DB::instance()->get_website_option( $website, 'themes_outdate_dismissed' ), true );
+			if ( is_array( $themesOutdateDismissed ) ) {
+				$themes_outdate = array_diff_key( $themes_outdate, $themesOutdateDismissed );
+			}
+
+			$decodedDismissedThemes = json_decode( $userExtension->dismissed_themes, true );
+			if ( is_array( $decodedDismissedThemes ) ) {
+				$themes_outdate = array_diff_key( $themes_outdate, $decodedDismissedThemes );
+			}
+		}
+
+		?>
+		<div class="ui <?php echo 'abandoned-themes' === $active_tab ? 'active' : ''; ?> tab" data-tab="abandoned-themes">
+			<table class="ui stackable single line table" id="mainwp-abandoned-themes-table">
+				<thead>
+					<tr>
+						<tr>
+							<th><?php esc_html_e( 'Theme', 'mainwp' ); ?></th>
+							<th><?php esc_html_e( 'Version', 'mainwp' ); ?></th>
+							<th><?php esc_html_e( 'Last Update', 'mainwp' ); ?></th>
+							<th class="no-sort"></th>
+						</tr>
+					</tr>
+				</thead>
+				<tbody site_id="<?php echo esc_attr( $website->id ); ?>" site_name="<?php echo rawurlencode( stripslashes( $website->name ) ); ?>">
+					<?php foreach ( $themes_outdate as $slug => $theme_outdate ) : ?>
+						<?php
+						$theme_name              = rawurlencode( $slug );
+						$now                     = new \DateTime();
+						$last_updated            = $theme_outdate['last_updated'];
+						$theme_last_updated_date = new \DateTime( '@' . $last_updated );
+						$diff_in_days            = $now->diff( $theme_last_updated_date )->format( '%a' );
+						$outdate_notice          = sprintf( $str_format, $diff_in_days );
+						?>
+						<tr dismissed="0">
+							<td>
+								<?php echo esc_html( $theme_outdate['Name'] ); ?>
+								<input type="hidden" id="wp_dismissed_theme_<?php echo esc_attr( $website->id ); ?>_<?php echo $theme_name; ?>" value="0"/>
+							</td>
+							<td><?php echo esc_html( $theme_outdate['Version'] ); ?></td>
+							<td><?php echo $outdate_notice; ?></td>
+							<td class="right aligned" id="wp_dismissbuttons_theme_<?php echo esc_attr( $website->id ); ?>_<?php echo $theme_name; ?>">
+								<?php if ( $user_can_ignore_unignore ) { ?>
+								<a href="javascript:void(0)" class="ui mini button" onClick="return updatesoverview_themes_dismiss_outdate_detail( '<?php echo $theme_name; ?>', '<?php echo rawurlencode( $theme_outdate['Name'] ); ?>', <?php echo esc_attr( $website->id ); ?>, this )"><?php esc_html_e( 'Ignore Now', 'mainwp' ); ?></a>
+								<?php } ?>
+							</td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+		</div>
+		<?php
+	}
+}
